@@ -1,0 +1,19 @@
+{
+  "name": "tw-delete",
+  "version": "1.0.0",
+  "main": "tw-delete.js.js",
+  "private": true,
+  "dependencies": {
+    "@babel/core": "^7.3.3",
+    "@babel/node": "^7.2.2",
+    "es6-promise-pool": "^2.5.0",
+    "twitter": "^1.7.1"
+  },
+  "scripts": {
+    "start": "babel-node tw-delete.js",
+    "format": "prettier --write '**/*.js'"
+  },
+  "devDependencies": {
+    "prettier": "^1.16.4"
+  }
+}
