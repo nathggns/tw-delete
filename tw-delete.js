@@ -13,7 +13,8 @@ const {
   TWD_CONSUMER_SECRET,
   TWD_ACCESS_TOKEN,
   TWD_ACCESS_TOKEN_SECRET,
-  TWD_CACHE_FILE = path.resolve("./cache.json")
+  TWD_CACHE_FILE = path.resolve("./cache.json"),
+  TWD_WHITELIST_FILE = path.resolve("./whitelist.json")
 } = process.env;
 
 if (
@@ -31,14 +32,7 @@ function sleep(ms) {
   });
 }
 
-async function findLastTweetOnDate(
-  get,
-  endDate,
-  maxId,
-  delay = 50,
-  attempt = 1
-) {
-  console.log(`Attempt ${attempt}`);
+async function* findLastTweetOnDate(get, endDate, maxId) {
   const tweets = await get("statuses/user_timeline", {
     max_id: maxId,
     count: 200
@@ -46,24 +40,11 @@ async function findLastTweetOnDate(
 
   for (const tweet of tweets) {
     if (new Date(tweet.created_at) < endDate) {
-      return tweet;
+      if (yield tweet) {
+        return;
+      }
     }
   }
-
-  if (attempt >= 5) {
-    throw new Error(`Could not find last tweet on ${endDate}`);
-  }
-
-  await sleep(delay);
-
-  const lastId = tweets[tweets.length - 1].id_str;
-  return await findLastTweetOnDate(
-    get,
-    endDate,
-    maxId,
-    delay + 50,
-    attempt + 1
-  );
 }
 
 function prompt(prompt) {
@@ -73,6 +54,8 @@ function prompt(prompt) {
       output: process.stdout,
       terminal: false
     });
+
+    console.clear();
 
     rl.question(prompt, answer => {
       rl.close();
@@ -112,8 +95,6 @@ async function collectTweets(get, maxId, collectedTweets) {
     return collectedTweets;
   }
 
-  console.log(`Found ${filteredTweets.length} tweets`);
-
   const tweets = [...collectedTweets, ...filteredTweets];
   await writeFile(TWD_CACHE_FILE, JSON.stringify(tweets));
 
@@ -132,7 +113,7 @@ async function deleteTweet(post, tweet, retry = 0) {
 
     // Ignore tweet already deleted
     if (!e || e.length !== 1 || e[0].code !== 144) {
-        throw e;
+      throw e;
     }
   }
 
@@ -143,13 +124,12 @@ async function deleteTweets(post, tweets) {
   function* generator() {
     let newTweets = tweets;
 
-
     for (const [count, tweet] of Object.entries(tweets)) {
       console.log(`Deleting ${count}/${tweets.length}`);
       yield deleteTweet(post, tweet);
 
       newTweets = tweets.filter(tw => tw.id_str !== tweet);
-      yield writeFile('./cache.json', JSON.stringify(newTweets));
+      yield writeFile("./cache.json", JSON.stringify(newTweets));
     }
   }
 
@@ -176,23 +156,66 @@ async function main([endDateString]) {
   const get = promisify(client.get.bind(client));
   const post = promisify(client.post.bind(client));
 
+  const whitelist = JSON.parse(await readFile(TWD_WHITELIST_FILE));
+
   console.log("Finding last tweet");
 
-  const lastTweet = await findLastTweetOnDate(get, endDate);
-  const promptResult = await prompt(
-    `Is this the last tweet you would like to delete?\n${
-      lastTweet.text
-    }: [Y/N] `
-  );
+  let foundTweet;
 
-  if (!promptResult.match(/^\s*[Yy]\s*/)) {
+  for await (let lastTweet of findLastTweetOnDate(get, endDate)) {
+    if (whitelist.includes(lastTweet.id)) {
+      continue;
+    }
+
+    const promptResult = await prompt(
+      `Is this the last tweet you would like to delete?\n${
+        lastTweet.text
+      }: [Y/N] `
+    );
+
+    if (promptResult.match(/^\s*[Yy]\s*/)) {
+      foundTweet = lastTweet;
+      break;
+    }
+  }
+
+  if (!foundTweet) {
     throw new Error("Could not find last tweet");
   }
 
-  const tweets = await collectTweets(get, lastTweet.id_str);
+  const tweets = await collectTweets(get, foundTweet.id_str);
 
-  await deleteTweets(post, tweets);
-  await writeFile("./cache.json", "[]");
+  const { toDelete, toReview } = tweets.reduce(
+    (acc, tweet) => {
+      const doesNotNeedReview =
+        tweet.retweeted_status ||
+        (tweet.retweet_count < 4 && tweet.favorite_count < 10);
+      const group = doesNotNeedReview ? acc.toDelete : acc.toReview;
+
+      group.push(tweet);
+
+      return acc;
+    },
+    { toDelete: [], toReview: [] }
+  );
+
+  await deleteTweets(post, toDelete);
+
+  for (const tweet of toReview) {
+    const promptResult = await prompt(
+      `Would you like to delete this high-quality tweet?\n${tweet.text}: [Y/N] `
+    );
+
+    if (promptResult.match(/^\s*[Yy]\s*/)) {
+      console.log("Deleting…");
+      await deleteTweet(post, tweet);
+    } else {
+      whitelist.push(tweet.id);
+      await writeFile(TWD_WHITELIST_FILE, JSON.stringify(whitelist));
+    }
+  }
+
+  await writeFile(TWD_CACHE_FILE, "[]");
 }
 
 main(process.argv.slice(2)).then(null, console.error);
