@@ -64,7 +64,7 @@ function prompt(prompt) {
   });
 }
 
-async function collectTweets(get, maxId, collectedTweets) {
+async function collectTweets(get, maxId, whitelist, collectedTweets) {
   if (!collectedTweets) {
     try {
       collectedTweets = JSON.parse(await readFile(TWD_CACHE_FILE));
@@ -88,7 +88,9 @@ async function collectTweets(get, maxId, collectedTweets) {
     count: 200
   });
   const filteredTweets = newTweets.filter(
-    nTweet => !collectedTweets.find(tw => nTweet.id_str === tw.id_str)
+    nTweet =>
+      !whitelist.includes(nTweet.id) &&
+      !collectedTweets.find(tw => nTweet.id_str === tw.id_str)
   );
 
   if (!filteredTweets.length) {
@@ -100,7 +102,7 @@ async function collectTweets(get, maxId, collectedTweets) {
 
   await sleep(1000);
 
-  return await collectTweets(get, maxId, tweets);
+  return await collectTweets(get, maxId, whitelist, tweets);
 }
 
 async function deleteTweet(post, tweet, retry = 0) {
@@ -183,7 +185,7 @@ async function main([endDateString]) {
     throw new Error("Could not find last tweet");
   }
 
-  const tweets = await collectTweets(get, foundTweet.id_str);
+  const tweets = await collectTweets(get, foundTweet.id_str, whitelist);
 
   const { toDelete, toReview } = tweets.reduce(
     (acc, tweet) => {
