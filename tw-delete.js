@@ -1,36 +1,7 @@
-const Twitter = require("twitter");
-const { promisify } = require("util");
-const readline = require("readline");
-const fs = require("fs");
-const path = require("path");
 const PromisePool = require("es6-promise-pool");
 
-const readFile = promisify(fs.readFile);
-const writeFile = promisify(fs.writeFile);
-
-const {
-  TWD_CONSUMER_KEY,
-  TWD_CONSUMER_SECRET,
-  TWD_ACCESS_TOKEN,
-  TWD_ACCESS_TOKEN_SECRET,
-  TWD_CACHE_FILE = path.resolve("./cache.json"),
-  TWD_WHITELIST_FILE = path.resolve("./whitelist.json")
-} = process.env;
-
-if (
-  !TWD_CONSUMER_KEY ||
-  !TWD_CONSUMER_SECRET ||
-  !TWD_ACCESS_TOKEN ||
-  !TWD_ACCESS_TOKEN_SECRET
-) {
-  throw new Error("Invalid config");
-}
-
-function sleep(ms) {
-  return new Promise(resolve => {
-    setTimeout(resolve, ms);
-  });
-}
+const { get, post, TWD_CACHE_FILE, TWD_WHITELIST_FILE } = require("./boostrap");
+const { readFile, writeFile, prompt, run, sleep } = require("./util");
 
 async function* findLastTweetOnDate(get, endDate, maxId) {
   const tweets = await get("statuses/user_timeline", {
@@ -45,23 +16,6 @@ async function* findLastTweetOnDate(get, endDate, maxId) {
       }
     }
   }
-}
-
-function prompt(prompt) {
-  return new Promise(resolve => {
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-      terminal: false
-    });
-
-    console.clear();
-
-    rl.question(prompt, answer => {
-      rl.close();
-      resolve(answer);
-    });
-  });
 }
 
 async function collectTweets(get, maxId, whitelist, collectedTweets) {
@@ -148,16 +102,6 @@ async function main([endDateString]) {
 
   const endDate = new Date(`${endDateString}T23:59:59.999Z`);
 
-  const client = new Twitter({
-    consumer_key: TWD_CONSUMER_KEY,
-    consumer_secret: TWD_CONSUMER_SECRET,
-    access_token_key: TWD_ACCESS_TOKEN,
-    access_token_secret: TWD_ACCESS_TOKEN_SECRET
-  });
-
-  const get = promisify(client.get.bind(client));
-  const post = promisify(client.post.bind(client));
-
   const whitelist = JSON.parse(await readFile(TWD_WHITELIST_FILE));
 
   console.log("Finding last tweet");
@@ -220,4 +164,4 @@ async function main([endDateString]) {
   await writeFile(TWD_CACHE_FILE, "[]");
 }
 
-main(process.argv.slice(2)).then(null, console.error);
+run(main);
